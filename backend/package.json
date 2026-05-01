@@ -1,0 +1,21 @@
+{
+  "name": "rag-ingestion",
+  "version": "1.0.0",
+  "description": "Local document ingestion pipeline — parses PDF/DOCX, chunks, embeds, stores in Supabase",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "ingest": "node src/index.js",
+    "ingest:watch": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "cli-progress": "^3.12.0",
+    "commander": "^12.0.0",
+    "dotenv": "^16.4.5",
+    "js-tiktoken": "^1.0.15",
+    "mammoth": "^1.7.2",
+    "openai": "^4.52.0",
+    "pdf-parse": "^1.1.1"
+  }
+}
