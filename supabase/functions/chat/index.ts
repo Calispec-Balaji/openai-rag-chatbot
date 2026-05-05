@@ -4,13 +4,31 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.0";
 // ── Environment variables ────────────────────────────────────────────────────
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are auto-injected by the runtime.
 // OPENAI_API_KEY and OPENROUTER_API_KEY must be set via `supabase secrets set`.
+// CHAT_PROVIDER, CHAT_MODEL, and EMBEDDING_MODEL are optional secrets with safe defaults.
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const EMBEDDING_MODEL = "text-embedding-3-small";
-const CHAT_MODEL = "meta-llama/llama-3.1-8b-instruct:free";
+const CHAT_PROVIDER   = Deno.env.get("CHAT_PROVIDER")   ?? "openrouter"; // "openai" | "openrouter"
+const CHAT_MODEL      = Deno.env.get("CHAT_MODEL")      ?? "meta-llama/llama-3.1-8b-instruct:free";
+const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") ?? "text-embedding-3-small";
+
+const PROVIDER_CONFIG = CHAT_PROVIDER === "openai"
+  ? {
+      url: "https://api.openai.com/v1/chat/completions",
+      apiKey: OPENAI_API_KEY,
+      extraHeaders: {} as Record<string, string>,
+    }
+  : {
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      apiKey: OPENROUTER_API_KEY,
+      extraHeaders: {
+        "HTTP-Referer": "https://your-domain.com",
+        "X-Title": "RAG Chatbot",
+      } as Record<string, string>,
+    };
+
 const MATCH_THRESHOLD = 0.7;
 const MATCH_COUNT = 5;
 
@@ -212,26 +230,25 @@ STRICT RULES:
         )
       );
 
-      const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const orRes = await fetch(PROVIDER_CONFIG.url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${PROVIDER_CONFIG.apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://your-domain.com", // update before deploying to production
-          "X-Title": "RAG Chatbot",
+          ...PROVIDER_CONFIG.extraHeaders,
         },
         body: JSON.stringify({
           model: CHAT_MODEL,
           messages,
           stream: true,
-          temperature: 0.1, // low temperature = more factual, less creative
+          temperature: 0.1,
           max_tokens: 1024,
         }),
       });
 
       if (!orRes.ok || !orRes.body) {
         const errText = await orRes.text();
-        console.error("[chat] OpenRouter error:", errText);
+        console.error(`[chat] ${CHAT_PROVIDER} error:`, errText);
         await writer.write(
           encoder.encode(
             `event: error\ndata: ${JSON.stringify({ error: "LLM request failed" })}\n\n`

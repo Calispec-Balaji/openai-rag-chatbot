@@ -56,7 +56,7 @@ A production-ready Retrieval-Augmented Generation (RAG) chatbot that answers que
 | Database | Supabase Postgres + pgvector |
 | API | Supabase Edge Functions (Deno) |
 | Embeddings | OpenAI `text-embedding-3-small` |
-| Chat LLM | OpenRouter → `meta-llama/llama-3.1-8b-instruct:free` |
+| Chat LLM | OpenRouter or OpenAI (configurable via Supabase secret) |
 | Ingestion | Local Node.js CLI (no deployment) |
 
 ---
@@ -154,9 +154,14 @@ node src/index.js report.pdf --verbose    # print chunk previews
 ### 3 — Deploy Edge Function
 
 ```bash
-# Set secret API keys in Supabase
+# Required API keys
 supabase secrets set OPENAI_API_KEY=sk-...
 supabase secrets set OPENROUTER_API_KEY=sk-or-...
+
+# Optional: choose provider and model (defaults shown)
+# supabase secrets set CHAT_PROVIDER=openrouter
+# supabase secrets set CHAT_MODEL=meta-llama/llama-3.1-8b-instruct:free
+# supabase secrets set EMBEDDING_MODEL=text-embedding-3-small
 
 # Deploy the chat Edge Function
 supabase functions deploy chat --no-verify-jwt
@@ -236,16 +241,31 @@ After deploying, update the `HTTP-Referer` header in `supabase/functions/chat/in
 | `text-embedding-3-small` ✓ | 1536 | $0.02 / 1M tokens | Default — best value |
 | `text-embedding-3-large` | 3072 | $0.13 / 1M tokens | Higher accuracy, larger index |
 
-### Chat (via OpenRouter)
+### Chat — OpenRouter (`CHAT_PROVIDER=openrouter`)
 | Model | Cost | Notes |
 |-------|------|-------|
 | `meta-llama/llama-3.1-8b-instruct:free` ✓ | Free | Default |
 | `google/gemma-3-12b-it:free` | Free | Alternative free option |
 | `google/gemini-flash-1.5` | $0.075 / 1M | Budget paid |
-| `openai/gpt-4o-mini` | $0.15 / 1M | Best value paid |
 | `anthropic/claude-3-5-haiku` | $0.80 / 1M | High quality |
 
-To swap models, change the `CHAT_MODEL` constant in `supabase/functions/chat/index.ts`.
+### Chat — OpenAI (`CHAT_PROVIDER=openai`)
+| Model | Cost | Notes |
+|-------|------|-------|
+| `gpt-4o-mini` | $0.15 / 1M | Best value |
+| `gpt-4o` | $2.50 / 1M | Highest quality |
+
+To switch providers or swap models, update Supabase secrets — no code changes needed:
+
+```bash
+# Switch to OpenAI GPT-4o Mini
+supabase secrets set CHAT_PROVIDER=openai CHAT_MODEL=gpt-4o-mini
+supabase functions deploy chat --no-verify-jwt
+
+# Switch back to OpenRouter (or just unset to use defaults)
+supabase secrets set CHAT_PROVIDER=openrouter CHAT_MODEL=meta-llama/llama-3.1-8b-instruct:free
+supabase functions deploy chat --no-verify-jwt
+```
 
 ---
 
@@ -292,7 +312,10 @@ To swap models, change the `CHAT_MODEL` constant in `supabase/functions/chat/ind
 | `VITE_SUPABASE_ANON_KEY` | Anon/public key — safe to expose in browser |
 
 ### Edge Function secrets (`supabase secrets set`)
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | OpenAI key for query embedding |
-| `OPENROUTER_API_KEY` | OpenRouter key for chat completions |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | Yes | — | OpenAI key for query embeddings (and chat when `CHAT_PROVIDER=openai`) |
+| `OPENROUTER_API_KEY` | Yes | — | OpenRouter key for chat completions |
+| `CHAT_PROVIDER` | No | `openrouter` | `openrouter` or `openai` |
+| `CHAT_MODEL` | No | `meta-llama/llama-3.1-8b-instruct:free` | Any model string valid for the chosen provider |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | ⚠️ Must produce 1536-dim vectors to match the DB index |

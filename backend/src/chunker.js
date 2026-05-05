@@ -62,6 +62,6 @@ export function chunkText(text) {
     })
   }
 
-  enc.free() // release WASM memory
+  if (typeof enc.free === 'function') enc.free()
   return chunks
 }
