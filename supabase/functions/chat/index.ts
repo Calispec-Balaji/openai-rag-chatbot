@@ -29,8 +29,11 @@ const PROVIDER_CONFIG = CHAT_PROVIDER === "openai"
       } as Record<string, string>,
     };
 
-const MATCH_THRESHOLD = 0.65;
+const MATCH_THRESHOLD = 0.55;
 const MATCH_COUNT = 12;
+
+// Short casual messages that don't need vector search
+const CONVERSATIONAL_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|great|cool|sounds good|sounds great|oh|wow|nice|awesome|perfect|got it|i see|alright|sure|yes|no|bye|goodbye|thats good|that's good|that's great|thats great|good|noted)\b\.?$/i;
 
 // ── CORS headers ─────────────────────────────────────────────────────────────
 // Tighten Access-Control-Allow-Origin to your production domain before shipping.
@@ -122,7 +125,50 @@ serve(async (req: Request) => {
     return jsonResponse({ error: "query is required and must be a non-empty string" }, 400);
   }
 
-  const normalizedQuery = query.trim().toLowerCase();
+  // Short-circuit conversational messages — no vector search needed
+  if (CONVERSATIONAL_RE.test(query.trim())) {
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = writable.getWriter();
+    const encoder = new TextEncoder();
+    const casualResponse = new Response(readable, {
+      headers: { ...CORS, "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" },
+    });
+    (async () => {
+      try {
+        const res = await fetch(PROVIDER_CONFIG.url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${PROVIDER_CONFIG.apiKey}`, "Content-Type": "application/json", ...PROVIDER_CONFIG.extraHeaders },
+          body: JSON.stringify({
+            model: CHAT_MODEL,
+            messages: [
+              { role: "system", content: "You are Calispec Assistant, a friendly virtual assistant for the Calispec Gauge Management System. Respond naturally and briefly to the user's casual message. Keep it short and warm." },
+              ...history.slice(-4).map((m) => ({ role: m.role, content: m.content })),
+              { role: "user", content: query.trim() },
+            ],
+            stream: true, temperature: 0.7, max_tokens: 100,
+          }),
+        });
+        if (res.ok && res.body) {
+          const reader = res.body.getReader();
+          while (true) { const { done, value } = await reader.read(); if (done) break; await writer.write(value); }
+        }
+        await writer.write(encoder.encode("data: [DONE]\n\n"));
+      } catch (err) { console.error("[chat] casual error:", err); }
+      finally { try { await writer.close(); } catch { /* ignore */ } }
+    })();
+    return casualResponse;
+  }
+
+  // For short follow-up queries (≤6 words), combine with last user turn to resolve
+  // references like "what about step 3?" or "bulk status?".
+  // Full standalone questions are used as-is to avoid context contamination.
+  const currentWordCount = query.trim().split(/\s+/).length;
+  const lastUserTurn = history.filter((m) => m.role === "user").slice(-1)[0]?.content ?? "";
+  const searchQuery =
+    currentWordCount <= 6 && lastUserTurn
+      ? `${lastUserTurn} ${query.trim()}`
+      : query.trim();
+  const normalizedQuery = searchQuery.toLowerCase();
 
   // ── Step 1: Embed the query (cache-first) ────────────────────────────────
   let queryEmbedding = getCachedEmbedding(normalizedQuery);
@@ -134,7 +180,7 @@ serve(async (req: Request) => {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model: EMBEDDING_MODEL, input: query.trim() }),
+      body: JSON.stringify({ model: EMBEDDING_MODEL, input: searchQuery }),
     });
 
     if (!embedRes.ok) {
@@ -153,6 +199,7 @@ serve(async (req: Request) => {
 
   const { data: chunks, error: rpcError } = await supabase.rpc("match_chunks", {
     query_embedding: queryEmbedding,
+    query_text: query.trim(),
     match_threshold: MATCH_THRESHOLD,
     match_count: MATCH_COUNT,
   });
@@ -180,19 +227,34 @@ serve(async (req: Request) => {
   }
 
   const systemPrompt = hasContext
-    ? `You are a knowledgeable and helpful assistant for this product. Answer the user's question using the document context below.
+    ? `You are Calispec Assistant, a virtual assistant for the Calispec Gauge Management System (GMS).
+
+Answer questions using ONLY the document context provided below. Never use general knowledge or invent steps, fields, or features not found in the context.
+
+If the answer is not in the context, say exactly:
+"I don't have that information in my knowledge base. Please contact your system administrator or refer to the Calispec documentation."
 
 DOCUMENT CONTEXT:
 ${contextBlock}
 
-GUIDELINES:
-- Give a complete, well-structured answer. Use numbered steps, bullet points, or tables when it helps clarity.
-- Write naturally — like a helpful expert explaining to a colleague, not a robot quoting a manual.
-- Do NOT repeatedly mention the document name or say "according to the document". Just answer directly.
-- Cover all relevant details from the context. Do not cut corners on multi-step processes.
-- If the answer is not in the context, say: "I don't have that information available."
-- Never fabricate information not present in the context.`
-    : `You are a helpful assistant. No relevant information was found in the knowledge base for this query. Say: "I don't have that information available."`;
+RESPONSE STYLE:
+- Friendly, professional, and clear — like a knowledgeable colleague, not a robot quoting a manual
+- Give complete answers covering all relevant steps and fields
+- Do not mention the document name repeatedly in your response
+
+FORMATTING:
+- Use **bold** for field names and important terms
+- Use numbered lists for steps, bullet points for options/fields
+- NEVER use: # headings, | tables, HTML tags, emojis, or --- dividers
+- Keep structure clean and easy to read`
+    : `You are Calispec Assistant, a virtual assistant for the Calispec Gauge Management System (GMS).
+
+No relevant documentation was found for this query.
+
+- If the user is greeting you, making small talk, or giving a casual acknowledgment (e.g. "hi", "thanks", "ok", "sounds great", "got it"), respond naturally and briefly in a friendly tone.
+- Otherwise, say: "I don't have that information in my knowledge base. Please contact your system administrator."
+
+FORMATTING: No # headings, no | tables, no HTML, no emojis, no --- dividers.`;
 
   // Include last 3 conversation turns (6 messages) to maintain context without token bloat
   const conversationHistory = history.slice(-6).map((m) => ({

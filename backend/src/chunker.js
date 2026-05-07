@@ -1,52 +1,35 @@
 import { getEncoding } from 'js-tiktoken'
 
 const CHUNK_SIZE = 512    // max tokens per chunk
-const CHUNK_OVERLAP = 100 // tokens of overlap between consecutive chunks
+const CHUNK_OVERLAP = 100 // overlap tokens when splitting oversized sections
 
-/**
- * Split text into overlapping chunks using token-aware sentence-boundary splitting.
- * Uses cl100k_base encoding (same tokenizer as text-embedding-3-small).
- *
- * Returns [{ content: string, tokenCount: number }]
- */
-export function chunkText(text) {
-  const enc = getEncoding('cl100k_base')
+// ── Sentence-level splitter (used for oversized sections) ────────────────────
 
-  // Normalize excessive blank lines, then split on sentence boundaries or paragraph breaks.
-  // Lookbehind on [.?!] followed by space+capital covers most English sentences.
+function splitWithOverlap(text, enc) {
   const sentences = text
-    .replace(/\n{3,}/g, '\n\n')
     .split(/(?<=[.?!])\s+(?=[A-Z])|(?:\n\n+)/)
     .map(s => s.trim())
     .filter(s => s.length > 0)
 
   const chunks = []
-  let currentText = []   // sentence strings in the current chunk
-  let currentTokens = [] // corresponding token ids
+  let currentText = []
+  let currentTokens = []
 
   for (const sentence of sentences) {
     const sentenceTokens = enc.encode(sentence)
 
     if (currentTokens.length + sentenceTokens.length > CHUNK_SIZE && currentText.length > 0) {
-      // Emit current chunk
-      chunks.push({
-        content: currentText.join(' '),
-        tokenCount: currentTokens.length
-      })
+      chunks.push({ content: currentText.join(' '), tokenCount: currentTokens.length })
 
-      // Build overlap: walk backward through currentText to find sentences
-      // that fit within CHUNK_OVERLAP tokens
-      let overlapTokenCount = 0
+      let overlapCount = 0
       let overlapStart = currentText.length
       for (let i = currentText.length - 1; i >= 0; i--) {
         const t = enc.encode(currentText[i]).length
-        if (overlapTokenCount + t > CHUNK_OVERLAP) break
-        overlapTokenCount += t
+        if (overlapCount + t > CHUNK_OVERLAP) break
+        overlapCount += t
         overlapStart = i
       }
-
       currentText = currentText.slice(overlapStart)
-      // Re-encode the overlap portion for accurate token count
       currentTokens = enc.encode(currentText.join(' '))
     }
 
@@ -54,12 +37,65 @@ export function chunkText(text) {
     currentTokens = enc.encode(currentText.join(' '))
   }
 
-  // Emit the final remaining chunk
   if (currentText.length > 0) {
-    chunks.push({
-      content: currentText.join(' '),
-      tokenCount: currentTokens.length
-    })
+    chunks.push({ content: currentText.join(' '), tokenCount: currentTokens.length })
+  }
+
+  return chunks
+}
+
+// ── Markdown section splitter ────────────────────────────────────────────────
+
+/**
+ * Split a Markdown string into sections at heading boundaries (## and ###).
+ * Each section includes its heading line followed by all body text until the next heading.
+ */
+function splitMarkdownIntoSections(markdown) {
+  const lines = markdown.split('\n')
+  const sections = []
+  let current = []
+
+  for (const line of lines) {
+    if (/^#{1,3}\s/.test(line) && current.length > 0) {
+      const text = current.join('\n').trim()
+      if (text) sections.push(text)
+      current = [line]
+    } else {
+      current.push(line)
+    }
+  }
+
+  const last = current.join('\n').trim()
+  if (last) sections.push(last)
+
+  return sections.filter(s => s.trim().length > 0)
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Chunk a Markdown string into RAG-ready pieces.
+ *
+ * Each ## / ### heading starts a new chunk boundary so sections are never
+ * split across chunks. Sections that exceed CHUNK_SIZE tokens are split
+ * internally with CHUNK_OVERLAP token lookback; overlap never crosses a
+ * heading boundary.
+ *
+ * Returns [{ content: string, tokenCount: number }]
+ */
+export function chunkMarkdown(markdown) {
+  const enc = getEncoding('cl100k_base')
+  const sections = splitMarkdownIntoSections(markdown)
+  const chunks = []
+
+  for (const section of sections) {
+    const tokenCount = enc.encode(section).length
+
+    if (tokenCount <= CHUNK_SIZE) {
+      chunks.push({ content: section, tokenCount })
+    } else {
+      chunks.push(...splitWithOverlap(section, enc))
+    }
   }
 
   if (typeof enc.free === 'function') enc.free()

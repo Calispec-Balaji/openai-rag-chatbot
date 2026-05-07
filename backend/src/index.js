@@ -7,7 +7,7 @@ import cliProgress from 'cli-progress'
 
 import { parsePdf } from './parsers/pdf.js'
 import { parseWord } from './parsers/word.js'
-import { chunkText } from './chunker.js'
+import { chunkMarkdown } from './chunker.js'
 import { embedChunks } from './embedder.js'
 import { createStore, computeFileHash, upsertDocument, storeChunks } from './store.js'
 
@@ -66,11 +66,11 @@ for (const filePath of files) {
       continue
     }
 
-    const { text, pageCount } = parseResult
-    console.log(`  Parsed:  ${text.length.toLocaleString()} chars, ${pageCount ?? 'N/A'} pages`)
+    const { markdown, pageCount } = parseResult
+    console.log(`  Parsed:  ${markdown.length.toLocaleString()} chars, ${pageCount ?? 'N/A'} pages`)
 
     // ── 2. Chunk ───────────────────────────────────────────────────
-    const chunks = chunkText(text)
+    const chunks = chunkMarkdown(markdown)
     console.log(`  Chunks:  ${chunks.length}`)
 
     if (opts.verbose) {
@@ -93,7 +93,7 @@ for (const filePath of files) {
       sourceType: ext.slice(1), // 'pdf' or 'docx'
       fileHash,
       pageCount,
-      charCount: text.length,
+      charCount: markdown.length,
       chunkCount: chunks.length
     })
 
