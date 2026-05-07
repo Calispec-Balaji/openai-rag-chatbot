@@ -72,7 +72,7 @@ export async function storeChunks(supabase, documentId, chunks, embeddings, onPr
     const batch = rows.slice(i, i + STORE_BATCH)
     const { error } = await supabase
       .from('document_chunks')
-      .upsert(batch, { onConflict: 'content_hash', ignoreDuplicates: true })
+      .upsert(batch, { onConflict: 'document_id,chunk_index', ignoreDuplicates: true })
 
     if (error) {
       throw new Error(`Failed to store chunks ${i}–${i + STORE_BATCH}: ${error.message}`)

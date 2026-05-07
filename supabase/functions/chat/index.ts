@@ -10,8 +10,8 @@ const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const CHAT_PROVIDER   = Deno.env.get("CHAT_PROVIDER")   ?? "openrouter"; // "openai" | "openrouter"
-const CHAT_MODEL      = Deno.env.get("CHAT_MODEL")      ?? "meta-llama/llama-3.1-8b-instruct:free";
+const CHAT_PROVIDER   = Deno.env.get("CHAT_PROVIDER")   ?? "openai"; // "openai" | "openrouter"
+const CHAT_MODEL      = Deno.env.get("CHAT_MODEL")      ?? "gpt-4o-mini";
 const EMBEDDING_MODEL = Deno.env.get("EMBEDDING_MODEL") ?? "text-embedding-3-small";
 
 const PROVIDER_CONFIG = CHAT_PROVIDER === "openai"
@@ -29,8 +29,8 @@ const PROVIDER_CONFIG = CHAT_PROVIDER === "openai"
       } as Record<string, string>,
     };
 
-const MATCH_THRESHOLD = 0.7;
-const MATCH_COUNT = 5;
+const MATCH_THRESHOLD = 0.65;
+const MATCH_COUNT = 12;
 
 // ── CORS headers ─────────────────────────────────────────────────────────────
 // Tighten Access-Control-Allow-Origin to your production domain before shipping.
@@ -180,18 +180,19 @@ serve(async (req: Request) => {
   }
 
   const systemPrompt = hasContext
-    ? `You are a helpful assistant that answers questions exclusively from the provided document context.
+    ? `You are a knowledgeable and helpful assistant for this product. Answer the user's question using the document context below.
 
 DOCUMENT CONTEXT:
 ${contextBlock}
 
-STRICT RULES:
-- Answer ONLY based on the context above. Do not use any prior knowledge or outside information.
-- If the answer cannot be found in the context, respond with exactly: "I don't have information about that in the documents."
-- Cite the source document name when referencing specific information (e.g., "According to [document name]...").
-- Be concise, accurate, and do not fabricate any details.
-- Do not speculate or extrapolate beyond what the context explicitly states.`
-    : `You are a helpful assistant. The knowledge base returned no documents relevant to this query. Respond with exactly: "I don't have information about that in the documents."`;
+GUIDELINES:
+- Give a complete, well-structured answer. Use numbered steps, bullet points, or tables when it helps clarity.
+- Write naturally — like a helpful expert explaining to a colleague, not a robot quoting a manual.
+- Do NOT repeatedly mention the document name or say "according to the document". Just answer directly.
+- Cover all relevant details from the context. Do not cut corners on multi-step processes.
+- If the answer is not in the context, say: "I don't have that information available."
+- Never fabricate information not present in the context.`
+    : `You are a helpful assistant. No relevant information was found in the knowledge base for this query. Say: "I don't have that information available."`;
 
   // Include last 3 conversation turns (6 messages) to maintain context without token bloat
   const conversationHistory = history.slice(-6).map((m) => ({
@@ -241,8 +242,8 @@ STRICT RULES:
           model: CHAT_MODEL,
           messages,
           stream: true,
-          temperature: 0.1,
-          max_tokens: 1024,
+          temperature: 0.2,
+          max_tokens: 2048,
         }),
       });
 
