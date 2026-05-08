@@ -23,7 +23,7 @@ export function computeFileHash(buffer) {
  * Insert a document row. Returns { id, skipped: true } if the file was already ingested
  * (detected via file_hash UNIQUE constraint), or { id, skipped: false } on new insert.
  */
-export async function upsertDocument(supabase, { name, sourceType, fileHash, pageCount, charCount, chunkCount }) {
+export async function upsertDocument(supabase, { name, sourceType, fileHash, pageCount, charCount, chunkCount, version, module }) {
   const { data: existing } = await supabase
     .from('documents')
     .select('id')
@@ -42,7 +42,9 @@ export async function upsertDocument(supabase, { name, sourceType, fileHash, pag
       file_hash: fileHash,
       page_count: pageCount,
       char_count: charCount,
-      chunk_count: chunkCount
+      chunk_count: chunkCount,
+      version,
+      module
     })
     .select('id')
     .single()

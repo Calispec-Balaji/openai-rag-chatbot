@@ -3,6 +3,7 @@ import 'dotenv/config'
 import { program } from 'commander'
 import { readFile } from 'fs/promises'
 import { extname, basename } from 'path'
+import { createInterface } from 'readline'
 import cliProgress from 'cli-progress'
 
 import { parsePdf } from './parsers/pdf.js'
@@ -35,6 +36,27 @@ const { supabase } = createStore(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+function ask(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise(resolve => rl.question(question, ans => { rl.close(); resolve(ans.trim()) }))
+}
+
+async function askRequired(label) {
+  let value = ''
+  while (!value) {
+    value = await ask(`  ${label}: `)
+    if (!value) console.error(`  ${label} is required — please enter a value.`)
+  }
+  return value
+}
+
+let batchVersion, batchModule
+if (!opts.dryRun) {
+  console.log('\nDocument metadata (applied to all files in this batch):')
+  batchVersion = await askRequired('Version (e.g. v1.4)')
+  batchModule  = await askRequired('Module  (e.g. gms module)')
+}
 
 const multibar = new cliProgress.MultiBar(
   {
@@ -94,7 +116,9 @@ for (const filePath of files) {
       fileHash,
       pageCount,
       charCount: markdown.length,
-      chunkCount: chunks.length
+      chunkCount: chunks.length,
+      version: batchVersion,
+      module: batchModule
     })
 
     if (skipped) {
